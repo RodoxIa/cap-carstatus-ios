@@ -1,0 +1,101 @@
+# ============================================================================
+# codemagic.yaml — CarStatus (wrapper Capacitor iOS)
+# Build + assinatura + envio pro TestFlight via Codemagic (Mac na nuvem).
+# Mesmo padrao do MeGuia (cap-meguia-ios). Free tier: mac_mini_m2, 500 min/mes.
+# ----------------------------------------------------------------------------
+#
+# >>> O QUE O CHEFE PRECISA CONFIGURAR ANTES DE RODAR (na conta Apple + Codemagic) <<<
+#
+#  1) Criar o app no App Store Connect:
+#       - Plataforma iOS | Nome: CarStatus | Bundle ID: br.com.futurizeia.carstatus
+#       - SKU: carstatus-ios-001 | Idioma primario: PT-BR
+#       - (Bundle ID precisa existir antes em Certificates, IDs & Profiles > Identifiers)
+#       - Anotar o APPLE ID numerico do app (aparece na ficha) e preencher em APP_STORE_APPLE_ID abaixo.
+#
+#  2) Integracao App Store Connect na Codemagic:
+#       - Reusar a MESMA API Key .p8 do MeGuia (Key ID Z4XV6T6BN6, Issuer aed0a88a-...).
+#         O Team e o mesmo (Futurize FuturizeIA, 9R57QQ98N6), entao a key serve.
+#       - Se a integracao ja existe na Codemagic com o nome "meguia_asc", pode reusar:
+#         basta manter o nome abaixo igual. Ou criar uma nova "carstatus_asc".
+#
+#  3) ASSINATURA (grupo de secure vars `carstatus_signing`):
+#       - Opcao A (recomendada, igual MeGuia): cert+perfil fixos via secure vars.
+#         Criar UMA vez via ASC API: Distribution cert + Provisioning profile App Store
+#         para br.com.futurizeia.carstatus. Subir como:
+#           CM_CERTIFICATE          = base64 do .p12
+#           CM_CERTIFICATE_PASSWORD = senha do .p12
+#           CM_PROVISIONING_PROFILE = base64 do .mobileprovision
+#       - Opcao B: automatic code signing gerenciado pela Codemagic via a API key
+#         (nesse caso remover o passo "Setup assinatura" e usar `auth: integration`).
+#
+#  4) NADA de segredo entra neste repositorio.
+# ============================================================================
+
+workflows:
+  ios-testflight:
+    name: CarStatus iOS - TestFlight
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+
+    integrations:
+      # Nome da integracao "App Store Connect" criada/reusada na UI da Codemagic.
+      app_store_connect: meguia_asc
+
+    environment:
+      groups:
+        # Secure vars com a assinatura do CarStatus (cert + perfil App Store):
+        #   CM_CERTIFICATE, CM_CERTIFICATE_PASSWORD, CM_PROVISIONING_PROFILE
+        - carstatus_signing
+      vars:
+        BUNDLE_ID: "br.com.futurizeia.carstatus"
+        APP_STORE_APPLE_ID: 0000000000   # <- PREENCHER com o Apple ID numerico do app (App Store Connect)
+        APPLE_TEAM_ID: "9R57QQ98N6"
+        XCODE_PROJECT: "ios/App/App.xcodeproj"
+        XCODE_SCHEME: "App"
+      node: 22
+      xcode: latest
+      cocoapods: default
+
+    scripts:
+      - name: Instalar dependencias do wrapper (npm)
+        script: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Capacitor sync iOS
+        script: |
+          npx cap sync ios
+
+      - name: Setup assinatura (certificado + perfil fixos via secure vars)
+        script: |
+          set -e
+          keychain initialize
+          echo "$CM_CERTIFICATE" | base64 --decode > /tmp/carstatus_dist.p12
+          keychain add-certificates \
+            --certificate /tmp/carstatus_dist.p12 \
+            --certificate-password "$CM_CERTIFICATE_PASSWORD"
+          PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$PROFILES_DIR"
+          echo "$CM_PROVISIONING_PROFILE" | base64 --decode > "$PROFILES_DIR/carstatus_appstore.mobileprovision"
+          xcode-project use-profiles
+
+      - name: Build IPA
+        script: |
+          xcode-project build-ipa \
+            --project "$XCODE_PROJECT" \
+            --scheme "$XCODE_SCHEME" \
+            --config Release
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.app
+
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        # submit_to_app_store: false  # so TestFlight por enquanto

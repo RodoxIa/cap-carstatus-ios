@@ -1,0 +1,23 @@
+{
+  "appId": "br.com.futurizeia.carstatus",
+  "appName": "CarStatus",
+  "webDir": "www",
+  "server": {
+    "url": "https://carstatus.futurizeia.com",
+    "cleartext": false,
+    "androidScheme": "https",
+    "iosScheme": "https"
+  },
+  "ios": {
+    "contentInset": "always",
+    "backgroundColor": "#ffffff"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1500,
+      "backgroundColor": "#0ea5e9",
+      "showSpinner": false,
+      "iosSplashResourceName": "Splash"
+    }
+  }
+}
