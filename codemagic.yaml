@@ -1,34 +1,30 @@
 # ============================================================================
 # codemagic.yaml — CarStatus (wrapper Capacitor iOS)
-# Build + assinatura + envio pro TestFlight via Codemagic (Mac na nuvem).
+# Build + assinatura + envio pro TestFlight/App Store via Codemagic (Mac na nuvem).
 # Mesmo padrao do MeGuia (cap-meguia-ios). Free tier: mac_mini_m2, 500 min/mes.
 # ----------------------------------------------------------------------------
 #
-# >>> O QUE O CHEFE PRECISA CONFIGURAR ANTES DE RODAR (na conta Apple + Codemagic) <<<
+# >>> PRE-REQUISITO QUE BLOQUEIA O UPLOAD <<<
+#   O app PRECISA existir no App Store Connect (ter um Apple ID numerico) ANTES
+#   de o build conseguir SUBIR (TestFlight/loja). Criar o app no ASC:
+#       Plataforma iOS | Nome: CarStatus | Bundle ID: br.com.futurizeia.carstatus
+#       SKU: carstatus-ios-001 | Idioma primario: PT-BR
+#   (O Bundle ID ja esta registrado em Certificates, IDs & Profiles > Identifiers.)
+#   Depois de criado, anotar o APPLE ID numerico e preencher APP_STORE_APPLE_ID abaixo.
 #
-#  1) Criar o app no App Store Connect:
-#       - Plataforma iOS | Nome: CarStatus | Bundle ID: br.com.futurizeia.carstatus
-#       - SKU: carstatus-ios-001 | Idioma primario: PT-BR
-#       - (Bundle ID precisa existir antes em Certificates, IDs & Profiles > Identifiers)
-#       - Anotar o APPLE ID numerico do app (aparece na ficha) e preencher em APP_STORE_APPLE_ID abaixo.
+# >>> ASSINATURA: AUTOMATIC via integracao App Store Connect <<<
+#   Reusa a MESMA integracao do MeGuia ("meguia_asc": API Key .p8, Key ID Z4XV6T6BN6,
+#   Issuer aed0a88a-...). Mesmo Team (9R57QQ98N6). Com `xcode-project fetch-signing-files`
+#   + `--create`, a Codemagic gera/baixa o CERT de distribuicao e o PROVISIONING PROFILE
+#   App Store especificos de br.com.futurizeia.carstatus automaticamente, usando a API Key.
+#   NAO precisa gerar/subir .p12 nem .mobileprovision por app. ZERO segredo no repo.
 #
-#  2) Integracao App Store Connect na Codemagic:
-#       - Reusar a MESMA API Key .p8 do MeGuia (Key ID Z4XV6T6BN6, Issuer aed0a88a-...).
-#         O Team e o mesmo (Futurize FuturizeIA, 9R57QQ98N6), entao a key serve.
-#       - Se a integracao ja existe na Codemagic com o nome "meguia_asc", pode reusar:
-#         basta manter o nome abaixo igual. Ou criar uma nova "carstatus_asc".
+#   (Se a integracao no Codemagic tiver outro nome, trocar `meguia_asc` abaixo.)
 #
-#  3) ASSINATURA (grupo de secure vars `carstatus_signing`):
-#       - Opcao A (recomendada, igual MeGuia): cert+perfil fixos via secure vars.
-#         Criar UMA vez via ASC API: Distribution cert + Provisioning profile App Store
-#         para br.com.futurizeia.carstatus. Subir como:
-#           CM_CERTIFICATE          = base64 do .p12
-#           CM_CERTIFICATE_PASSWORD = senha do .p12
-#           CM_PROVISIONING_PROFILE = base64 do .mobileprovision
-#       - Opcao B: automatic code signing gerenciado pela Codemagic via a API key
-#         (nesse caso remover o passo "Setup assinatura" e usar `auth: integration`).
-#
-#  4) NADA de segredo entra neste repositorio.
+# >>> EVITAR FALHA DE UPLOAD ANTES DO APP EXISTIR <<<
+#   A publicacao (publishing.app_store_connect) so dispara quando o build roda
+#   na branch `main`. Enquanto o app nao existir no ASC, rode o build em uma
+#   branch de teste (ex: `test-build`) -> ele COMPILA o .ipa mas NAO tenta subir.
 # ============================================================================
 
 workflows:
@@ -38,14 +34,11 @@ workflows:
     max_build_duration: 60
 
     integrations:
-      # Nome da integracao "App Store Connect" criada/reusada na UI da Codemagic.
+      # Integracao "App Store Connect" (API Key .p8) criada na UI do Codemagic.
+      # Reusa a do MeGuia (mesmo Team). Trocar o nome aqui se for diferente.
       app_store_connect: meguia_asc
 
     environment:
-      groups:
-        # Secure vars com a assinatura do CarStatus (cert + perfil App Store):
-        #   CM_CERTIFICATE, CM_CERTIFICATE_PASSWORD, CM_PROVISIONING_PROFILE
-        - carstatus_signing
       vars:
         BUNDLE_ID: "br.com.futurizeia.carstatus"
         APP_STORE_APPLE_ID: 0000000000   # <- PREENCHER com o Apple ID numerico do app (App Store Connect)
@@ -55,6 +48,14 @@ workflows:
       node: 22
       xcode: latest
       cocoapods: default
+
+    triggering:
+      # Publica (sobe pro TestFlight) apenas builds da branch main.
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
 
     scripts:
       - name: Instalar dependencias do wrapper (npm)
@@ -69,17 +70,17 @@ workflows:
         script: |
           npx cap sync ios
 
-      - name: Setup assinatura (certificado + perfil fixos via secure vars)
+      - name: Assinatura automatica (cert + profile App Store via ASC API Key)
         script: |
           set -e
           keychain initialize
-          echo "$CM_CERTIFICATE" | base64 --decode > /tmp/carstatus_dist.p12
-          keychain add-certificates \
-            --certificate /tmp/carstatus_dist.p12 \
-            --certificate-password "$CM_CERTIFICATE_PASSWORD"
-          PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
-          mkdir -p "$PROFILES_DIR"
-          echo "$CM_PROVISIONING_PROFILE" | base64 --decode > "$PROFILES_DIR/carstatus_appstore.mobileprovision"
+          # Baixa/cria automaticamente o certificado de distribuicao e o
+          # provisioning profile App Store para o BUNDLE_ID, usando a API Key
+          # da integracao app_store_connect. --create cria o que faltar.
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --create
+          keychain add-certificates
           xcode-project use-profiles
 
       - name: Build IPA
@@ -96,6 +97,7 @@ workflows:
 
     publishing:
       app_store_connect:
+        # Usa a integracao app_store_connect declarada acima.
         auth: integration
         submit_to_testflight: true
         # submit_to_app_store: false  # so TestFlight por enquanto
