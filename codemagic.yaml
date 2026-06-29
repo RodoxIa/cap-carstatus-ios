@@ -74,11 +74,18 @@ workflows:
         script: |
           set -e
           keychain initialize
-          # Baixa/cria automaticamente o certificado de distribuicao e o
-          # provisioning profile App Store para o BUNDLE_ID, usando a API Key
-          # da integracao app_store_connect. --create cria o que faltar.
+          # Gera uma private key local (RSA 2048). Necessaria porque o
+          # fetch-signing-files de um cert de distribuicao EXISTENTE so traz a
+          # parte publica (.cer) — sem private key, "Cannot save Signing
+          # Certificates without certificate private key". Passando a key abaixo,
+          # a CLI cria um certificado NOVO ja casado com ela (ou monta o .p12).
+          PK="$CM_BUILD_DIR/cert_key.pem"
+          openssl genrsa -out "$PK" 2048
+          # Baixa/cria o certificado de distribuicao + provisioning profile App
+          # Store para o BUNDLE_ID, usando a API Key da integracao app_store_connect.
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
+            --certificate-key @file:"$PK" \
             --create
           keychain add-certificates
           xcode-project use-profiles
