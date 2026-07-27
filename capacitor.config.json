@@ -3,7 +3,7 @@
   "appName": "CarStatus",
   "webDir": "www",
   "server": {
-    "url": "https://carstatus.futurizeia.com",
+    "url": "https://carstatus.futurizeia.com?app=1",
     "cleartext": false,
     "androidScheme": "https",
     "iosScheme": "https"
